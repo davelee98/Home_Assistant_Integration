@@ -50,7 +50,28 @@
             }
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "sleep_mode": "Deep sleep handling",
+                    "missed_cycles": "Missed wake cycles before unavailable",
+                    "queue_timeout_hours": "Queued content timeout (hours)"
+                },
+                "data_description": {
+                    "sleep_mode": "Automatic follows the device's own power configuration (battery power with deep sleep enabled). Force on or off to override.",
+                    "missed_cycles": "How many expected wake-ups the device may miss before its entities are marked unavailable.",
+                    "queue_timeout_hours": "How long content queued for a sleeping device waits for a wake before it expires."
+                }
+            }
+        }
+    },
     "entity": {
+        "binary_sensor": {
+            "update_pending": {
+                "name": "Update pending"
+            }
+        },
         "image": {
             "content": {
                 "name": "Display content"
@@ -105,6 +126,12 @@
         "device_not_found": {
             "message": "Could not find Bluetooth device with address `{address}`."
         },
+        "device_sleeping": {
+            "message": "Device `{device_id}` is asleep and cannot be reached immediately. Wake it and try again."
+        },
+        "device_sleeping_ota": {
+            "message": "The device is asleep and cannot be updated right now. Wake it (press its button or wait for its next scheduled check-in) and start the update again."
+        },
         "invalid_device_id": {
             "message": "Device `{device_id}` is not a valid OpenDisplay device."
         },
@@ -157,6 +184,13 @@
                 "fast": "Fast",
                 "full": "Full",
                 "partial": "Partial"
+            }
+        },
+        "sleep_mode": {
+            "options": {
+                "auto": "Automatic (follow device)",
+                "off": "Force off",
+                "on": "Force on"
             }
         }
     },

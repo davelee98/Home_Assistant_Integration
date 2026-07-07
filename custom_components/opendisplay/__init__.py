@@ -3,7 +3,8 @@
 import asyncio
 import contextlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
 
 from opendisplay import (
     AuthenticationFailedError,
@@ -15,11 +16,13 @@ from opendisplay import (
     OpenDisplayError,
     PartialState,
 )
+from opendisplay.models.config_json import config_from_json, config_to_json
 
 from homeassistant.components.bluetooth import (
     BluetoothReachabilityIntent,
     async_address_reachability_diagnostics,
     async_ble_device_from_address,
+    async_set_fallback_availability_interval,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -29,17 +32,29 @@ from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH
 from homeassistant.helpers.typing import ConfigType
 
+from .const import CONF_CACHED_STATE, CONF_ENCRYPTION_KEY, DOMAIN
+from .coordinator import OpenDisplayCoordinator
+from .delivery import DeliveryManager
+from .services import async_setup_services
+from .sleep import SleepProfile
+
 if TYPE_CHECKING:
     from opendisplay.models import FirmwareVersion
 
-from .const import CONF_ENCRYPTION_KEY, DOMAIN
-from .coordinator import OpenDisplayCoordinator
-from .services import async_setup_services
-
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-_BASE_PLATFORMS: list[Platform] = [Platform.IMAGE, Platform.SENSOR]
-_FLEX_PLATFORMS = [Platform.EVENT, Platform.IMAGE, Platform.SENSOR, Platform.UPDATE]
+_BASE_PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.IMAGE,
+    Platform.SENSOR,
+]
+_FLEX_PLATFORMS = [
+    Platform.BINARY_SENSOR,
+    Platform.EVENT,
+    Platform.IMAGE,
+    Platform.SENSOR,
+    Platform.UPDATE,
+]
 
 
 @dataclass
@@ -50,6 +65,8 @@ class OpenDisplayRuntimeData:
     firmware: FirmwareVersion
     device_config: GlobalConfig
     is_flex: bool
+    # Resolved deep-sleep behavior (options + device power config).
+    sleep_profile: SleepProfile
     upload_task: asyncio.Task | None = None
     # Serializes every BLE connection to this tag (one config entry == one MAC).
     # The device exposes a single BLE link with no per-address lock in the
@@ -60,9 +77,85 @@ class OpenDisplayRuntimeData:
     # (0x76). Replaced with a fresh instance on every full/fast refresh so the
     # next partial diffs against the frame actually on the panel.
     partial_state: PartialState = field(default_factory=PartialState)
+    # Set when the entry was set up from cache without connecting; the delivery
+    # manager re-reads firmware/config at the next wake and refreshes the cache.
+    config_resync_pending: bool = False
+    # Owns queued work delivered at the next wake (set in async_setup_entry).
+    delivery: DeliveryManager | None = None
 
 
 type OpenDisplayConfigEntry = ConfigEntry[OpenDisplayRuntimeData]
+
+
+@dataclass
+class _CachedState:
+    """Device state restored from ``entry.data`` for setup-without-connect."""
+
+    firmware: FirmwareVersion
+    is_flex: bool
+    device_config: GlobalConfig
+    landing_url: str | None
+
+
+def _load_cache(entry: OpenDisplayConfigEntry) -> _CachedState | None:
+    """Rebuild cached device state from the config entry, or None if absent."""
+    raw = entry.data.get(CONF_CACHED_STATE)
+    if not raw:
+        return None
+    try:
+        device_config = config_from_json(raw["config"])
+        return _CachedState(
+            firmware=raw["firmware"],
+            is_flex=raw["is_flex"],
+            device_config=device_config,
+            landing_url=raw.get("landing_url"),
+        )
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _write_cache(
+    hass: HomeAssistant,
+    entry: OpenDisplayConfigEntry,
+    device_config: GlobalConfig,
+    firmware: FirmwareVersion,
+    is_flex: bool,
+    landing_url: str | None,
+) -> None:
+    """Persist the device state needed to set up the entry without connecting.
+
+    Called after every successful interrogation (setup and, later, wake-time
+    resync). Writes only when the meaningful contents changed so we don't churn
+    the config-entry store on every reload.
+    """
+    payload: dict[str, Any] = {
+        "config": config_to_json(device_config),
+        "firmware": dict(firmware),
+        "is_flex": is_flex,
+        "landing_url": landing_url,
+    }
+    existing = entry.data.get(CONF_CACHED_STATE)
+    if existing is not None and all(
+        existing.get(key) == value for key, value in payload.items()
+    ):
+        return
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, CONF_CACHED_STATE: {**payload, "cached_at": time.time()}},
+    )
+
+
+def _cache_setup_if_sleepy(
+    entry: OpenDisplayConfigEntry,
+) -> _CachedState | None:
+    """Return cached state iff it exists and resolves to a sleepy device."""
+    cached = _load_cache(entry)
+    if cached is None:
+        return None
+    profile = SleepProfile.from_entry(entry, cached.device_config)
+    if not profile.is_sleepy:
+        return None
+    return cached
 
 
 def _get_encryption_key(entry: OpenDisplayConfigEntry) -> bytes | None:
@@ -89,47 +182,73 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) -> bool:
-    """Set up OpenDisplay from a config entry."""
+    """Set up OpenDisplay from a config entry.
+
+    A reachable device is interrogated live (firmware + config) and the result
+    cached. When the device is dark and the cache says it is a deep-sleeping
+    tag, the entry is set up entirely from cache without connecting; the
+    delivery manager re-reads it at the next wake. Any other unreachable case
+    preserves the original ConfigEntryNotReady/ConfigEntryAuthFailed behavior.
+    """
     address = entry.unique_id
     if TYPE_CHECKING:
         assert address is not None
 
     ble_device = async_ble_device_from_address(hass, address, connectable=True)
+    from_cache = False
+
     if ble_device is None:
-        raise ConfigEntryNotReady(
-            translation_domain=DOMAIN,
-            translation_key="device_not_found",
-            translation_placeholders={
-                "address": address,
-                "reason": async_address_reachability_diagnostics(
-                    hass,
-                    address.upper(),
-                    BluetoothReachabilityIntent.CONNECTION,
-                ),
-            },
-        )
-    encryption_key = _get_encryption_key(entry)
+        cached = _cache_setup_if_sleepy(entry)
+        if cached is None:
+            raise ConfigEntryNotReady(
+                translation_domain=DOMAIN,
+                translation_key="device_not_found",
+                translation_placeholders={
+                    "address": address,
+                    "reason": async_address_reachability_diagnostics(
+                        hass,
+                        address.upper(),
+                        BluetoothReachabilityIntent.CONNECTION,
+                    ),
+                },
+            )
+        fw = cached.firmware
+        is_flex = cached.is_flex
+        device_config = cached.device_config
+        landing_url = cached.landing_url
+        from_cache = True
+    else:
+        encryption_key = _get_encryption_key(entry)
+        try:
+            async with OpenDisplayDevice(
+                mac_address=address,
+                ble_device=ble_device,
+                encryption_key=encryption_key,
+            ) as device:
+                fw = await device.read_firmware_version()
+                is_flex = device.is_flex
+                # Capture while connected: landing_url() reads the advertised name.
+                landing_url = device.landing_url()
+            device_config = device.config
+            if TYPE_CHECKING:
+                assert device_config is not None
+        except (AuthenticationFailedError, AuthenticationRequiredError) as err:
+            raise ConfigEntryAuthFailed(
+                f"Encryption key rejected by OpenDisplay device: {err}"
+            ) from err
+        except (BLEConnectionError, BLETimeoutError, OpenDisplayError) as err:
+            cached = _cache_setup_if_sleepy(entry)
+            if cached is None:
+                raise ConfigEntryNotReady(
+                    f"Failed to connect to OpenDisplay device: {err}"
+                ) from err
+            fw = cached.firmware
+            is_flex = cached.is_flex
+            device_config = cached.device_config
+            landing_url = cached.landing_url
+            from_cache = True
 
-    try:
-        async with OpenDisplayDevice(
-            mac_address=address, ble_device=ble_device, encryption_key=encryption_key
-        ) as device:
-            fw = await device.read_firmware_version()
-            is_flex = device.is_flex
-            # Capture while connected: landing_url() reads the advertised name.
-            landing_url = device.landing_url()
-    except (AuthenticationFailedError, AuthenticationRequiredError) as err:
-        raise ConfigEntryAuthFailed(
-            f"Encryption key rejected by OpenDisplay device: {err}"
-        ) from err
-    except (BLEConnectionError, BLETimeoutError, OpenDisplayError) as err:
-        raise ConfigEntryNotReady(
-            f"Failed to connect to OpenDisplay device: {err}"
-        ) from err
-    device_config = device.config
-    if TYPE_CHECKING:
-        assert device_config is not None
-
+    profile = SleepProfile.from_entry(entry, device_config)
     coordinator = OpenDisplayCoordinator(hass, address)
 
     manufacturer = device_config.manufacturer
@@ -162,17 +281,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
         firmware=fw,
         device_config=device_config,
         is_flex=is_flex,
+        sleep_profile=profile,
+        config_resync_pending=from_cache,
     )
+
+    # Persist a fresh interrogation so the next dark startup can set up from
+    # cache; skip when we just loaded from cache (nothing new to store).
+    if not from_cache:
+        _write_cache(hass, entry, device_config, fw, is_flex, landing_url)
+
+    # Keep entities available across sleep cycles: without this, any sleep
+    # interval longer than the ~5 min staleness horizon flaps everything
+    # unavailable once per cycle.
+    if profile.is_sleepy:
+        async_set_fallback_availability_interval(
+            hass, address, profile.availability_interval
+        )
+
+    manager = DeliveryManager(hass, entry)
+    entry.runtime_data.delivery = manager
 
     await hass.config_entries.async_forward_entry_setups(
         entry, _get_platforms(entry.runtime_data)
     )
     entry.async_on_unload(coordinator.async_start())
+    manager.async_start()
+
+    if from_cache:
+        # Re-read firmware/config on the next wake and refresh the cache.
+        manager.request_config_resync()
 
     @callback
     def _schedule_reboot_reload() -> None:
-        """Re-read firmware/config after the device signals a reboot."""
-        hass.async_create_task(_async_reload_after_reboot(hass, entry))
+        """React to the device's advertised reboot edge.
+
+        For sleepy devices the firmware's unpersisted reboot flag makes every
+        wake look like a reboot, and a reconnecting reload races the wake
+        window; route to an opportunistic config resync instead. Non-sleepy
+        devices keep the reload behavior.
+        """
+        if profile.is_sleepy:
+            manager.request_config_resync()
+        else:
+            hass.async_create_task(_async_reload_after_reboot(hass, entry))
 
     entry.async_on_unload(coordinator.async_subscribe_reboot(_schedule_reboot_reload))
 
@@ -215,9 +366,12 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry."""
     runtime = entry.runtime_data
-    # Abort an in-flight image upload quickly so unload is not blocked on a long
-    # BLE transfer, then wait for any other in-flight BLE op (LED, buzzer, OTA,
+    # Cancel pending deadline timers and any in-flight delivery task, then abort
+    # an in-flight image upload quickly so unload is not blocked on a long BLE
+    # transfer, then wait for any other in-flight BLE op (LED, buzzer, OTA,
     # drawcustom) to release the link before tearing the entry down.
+    if runtime.delivery is not None:
+        await runtime.delivery.async_shutdown()
     if (task := runtime.upload_task) and not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

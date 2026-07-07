@@ -55,6 +55,10 @@ class OpenDisplayCoordinator(PassiveBluetoothDataUpdateCoordinator):
         # Subscribers notified once when the advertised reboot flag goes
         # False -> True (the device rebooted since we last talked to it).
         self._reboot_callbacks: set[CALLBACK_TYPE] = set()
+        # Subscribers notified on every parsed advertisement (the device is
+        # awake and reachable right now). The delivery manager uses this as the
+        # wake rendezvous to drain queued work.
+        self._device_seen_callbacks: set[CALLBACK_TYPE] = set()
         # Reboot-flag edge detection: the device sets the advertised reboot flag
         # on boot and clears it on first connect. None until the first v1 advert.
         self._last_reboot_flag: bool | None = None
@@ -70,6 +74,21 @@ class OpenDisplayCoordinator(PassiveBluetoothDataUpdateCoordinator):
         @callback
         def _unsubscribe() -> None:
             self._reboot_callbacks.discard(callback_)
+
+        return _unsubscribe
+
+    @callback
+    def async_subscribe_device_seen(self, callback_: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Subscribe to "device seen" events (every parsed advertisement).
+
+        Fired after each successfully parsed advertisement, i.e. whenever the
+        device is awake and reachable. Returns an unsubscribe callback.
+        """
+        self._device_seen_callbacks.add(callback_)
+
+        @callback
+        def _unsubscribe() -> None:
+            self._device_seen_callbacks.discard(callback_)
 
         return _unsubscribe
 
@@ -123,6 +142,8 @@ class OpenDisplayCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 button_events=button_events,
                 touch_events=touch_events,
             )
+            for device_seen_callback in list(self._device_seen_callbacks):
+                device_seen_callback()
 
         super()._async_handle_bluetooth_event(service_info, change)
 

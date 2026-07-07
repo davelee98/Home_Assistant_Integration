@@ -19,12 +19,78 @@ from homeassistant.components.bluetooth import (
     async_ble_device_from_address,
     async_discovered_service_info,
 )
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_ADDRESS
+from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
-from .const import CONF_ENCRYPTION_KEY, DOMAIN
+from .const import (
+    CONF_ENCRYPTION_KEY,
+    CONF_MISSED_CYCLES,
+    CONF_QUEUE_TIMEOUT_HOURS,
+    CONF_SLEEP_MODE,
+    DEFAULT_MISSED_CYCLES,
+    DEFAULT_QUEUE_TIMEOUT_HOURS,
+    DEFAULT_SLEEP_MODE,
+    DOMAIN,
+    SLEEP_MODE_AUTO,
+    SLEEP_MODE_OFF,
+    SLEEP_MODE_ON,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _options_schema() -> vol.Schema:
+    """Return the options-flow schema."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_SLEEP_MODE, default=DEFAULT_SLEEP_MODE
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[SLEEP_MODE_AUTO, SLEEP_MODE_ON, SLEEP_MODE_OFF],
+                    translation_key="sleep_mode",
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Required(CONF_MISSED_CYCLES, default=DEFAULT_MISSED_CYCLES): vol.All(
+                NumberSelector(
+                    NumberSelectorConfig(
+                        min=1, max=100, step=1, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Coerce(int),
+            ),
+            vol.Required(
+                CONF_QUEUE_TIMEOUT_HOURS, default=DEFAULT_QUEUE_TIMEOUT_HOURS
+            ): vol.All(
+                NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=168,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="h",
+                    )
+                ),
+                vol.Coerce(int),
+            ),
+        }
+    )
 
 
 _ENCRYPTION_KEY_VALIDATOR = vol.All(str.strip, str.lower, vol.Match(r"^[0-9a-f]{32}$"))
@@ -37,6 +103,12 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_devices: dict[str, BluetoothServiceInfoBleak] = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow handler."""
+        return OpenDisplayOptionsFlow()
 
     async def _async_test_connection(
         self, address: str, encryption_key: bytes | None = None
@@ -240,4 +312,28 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             description_placeholders={"name": reauth_entry.title},
             errors=errors,
+        )
+
+
+class OpenDisplayOptionsFlow(OptionsFlowWithReload):
+    """Handle deep-sleep options for an OpenDisplay device.
+
+    Extends ``OptionsFlowWithReload`` so saving changed options automatically
+    reloads the entry, re-resolving the sleep profile and re-applying the
+    availability interval. No manual update listener is registered (mixing the
+    two is disallowed).
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the deep-sleep options."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                _options_schema(), self.config_entry.options
+            ),
         )

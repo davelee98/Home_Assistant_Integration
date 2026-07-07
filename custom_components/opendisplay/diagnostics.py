@@ -28,6 +28,29 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     runtime = entry.runtime_data
     fw = runtime.firmware
+    profile = runtime.sleep_profile
+
+    sleep_diag: dict[str, Any] = {
+        "is_sleepy": profile.is_sleepy,
+        "deep_sleep_enabled": profile.deep_sleep_enabled,
+        "deep_sleep_time_seconds": profile.deep_sleep_time_seconds,
+        "sleep_timeout_ms": profile.sleep_timeout_ms,
+        "missed_cycles": profile.missed_cycles,
+        "queue_timeout_hours": profile.queue_timeout_hours,
+        "availability_interval_s": profile.availability_interval,
+        "config_resync_pending": runtime.config_resync_pending,
+    }
+
+    # Delivery slot state only: timestamps/attempts, never queued image bytes.
+    if runtime.delivery is not None:
+        state = runtime.delivery.state
+        sleep_diag["delivery"] = {
+            "pending": state.pending,
+            "queued_at": state.queued_at,
+            "expires_at": state.expires_at,
+            "attempts": state.attempts,
+            "last_error": state.last_error,
+        }
 
     return {
         "firmware": {
@@ -36,5 +59,6 @@ async def async_get_config_entry_diagnostics(
             "sha": fw["sha"],
         },
         "is_flex": runtime.is_flex,
+        "sleep": sleep_diag,
         "device_config": async_redact_data(_asdict(runtime.device_config), TO_REDACT),
     }

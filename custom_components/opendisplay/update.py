@@ -26,6 +26,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import OpenDisplayConfigEntry, _get_encryption_key
+from .const import DOMAIN
 from .entity import OpenDisplayEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,6 +166,24 @@ class OpenDisplayFirmwareUpdateEntity(OpenDisplayEntity[UpdateEntityDescription]
         tag = version or self._attr_latest_version
         if not tag:
             raise HomeAssistantError("No firmware version available to install")
+
+        # A deep-sleeping tag is dark most of the time and the multi-connection
+        # AppLoader flash (DFU trigger -> reconnect -> OTA) cannot be driven
+        # reliably inside a ~10 s wake window. Rather than start an install that
+        # will strand mid-flash, fail fast with clear guidance to wake it first.
+        runtime = self._entry.runtime_data
+        profile = runtime.sleep_profile
+        if profile.is_sleepy:
+            last_seen = (
+                runtime.coordinator.data.last_seen
+                if runtime.coordinator.data
+                else None
+            )
+            if profile.probably_asleep(last_seen):
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="device_sleeping_ota",
+                )
 
         asset_name = firmware_ota_asset(self._ic_type, tag)
         if asset_name is None:

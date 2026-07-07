@@ -1,5 +1,13 @@
 {
   "entity": {
+    "binary_sensor": {
+      "update_pending": {
+        "default": "mdi:image-sync",
+        "state": {
+          "off": "mdi:image-check"
+        }
+      }
+    },
     "update": {
       "firmware": {
         "default": "mdi:chip"
