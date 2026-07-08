@@ -56,12 +56,14 @@
                 "data": {
                     "sleep_mode": "Deep sleep handling",
                     "missed_cycles": "Missed wake cycles before unavailable",
-                    "queue_timeout_hours": "Queued content timeout (hours)"
+                    "queue_timeout_hours": "Queued content timeout (hours)",
+                    "probe_before_queue": "Try connecting before queueing"
                 },
                 "data_description": {
                     "sleep_mode": "Automatic follows the device's own power configuration (battery power with deep sleep enabled). Force on or off to override.",
                     "missed_cycles": "How many expected wake-ups the device may miss before its entities are marked unavailable.",
-                    "queue_timeout_hours": "How long content queued for a sleeping device waits for a wake before it expires."
+                    "queue_timeout_hours": "How long content queued for a sleeping device waits for a wake before it expires.",
+                    "probe_before_queue": "Before queueing an image for a sleeping device, make one quick connection attempt in case it is actually awake (missed advertisements, always-on radios). Adds at most a few seconds when the device really is asleep."
                 }
             }
         }

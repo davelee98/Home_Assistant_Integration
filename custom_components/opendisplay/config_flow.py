@@ -29,6 +29,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -40,9 +41,11 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ENCRYPTION_KEY,
     CONF_MISSED_CYCLES,
+    CONF_PROBE_BEFORE_QUEUE,
     CONF_QUEUE_TIMEOUT_HOURS,
     CONF_SLEEP_MODE,
     DEFAULT_MISSED_CYCLES,
+    DEFAULT_PROBE_BEFORE_QUEUE,
     DEFAULT_QUEUE_TIMEOUT_HOURS,
     DEFAULT_SLEEP_MODE,
     DOMAIN,
@@ -89,6 +92,9 @@ def _options_schema() -> vol.Schema:
                 ),
                 vol.Coerce(int),
             ),
+            vol.Required(
+                CONF_PROBE_BEFORE_QUEUE, default=DEFAULT_PROBE_BEFORE_QUEUE
+            ): BooleanSelector(),
         }
     )
 

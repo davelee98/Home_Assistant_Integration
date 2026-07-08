@@ -29,9 +29,11 @@ from opendisplay.models.enums import PowerMode
 
 from .const import (
     CONF_MISSED_CYCLES,
+    CONF_PROBE_BEFORE_QUEUE,
     CONF_QUEUE_TIMEOUT_HOURS,
     CONF_SLEEP_MODE,
     DEFAULT_MISSED_CYCLES,
+    DEFAULT_PROBE_BEFORE_QUEUE,
     DEFAULT_QUEUE_TIMEOUT_HOURS,
     DEFAULT_SLEEP_MODE,
     SLEEP_MODE_OFF,
@@ -64,6 +66,7 @@ class SleepProfile:
     sleep_timeout_ms: int
     missed_cycles: int
     queue_timeout_hours: int
+    probe_before_queue: bool
 
     @property
     def wake_window_s(self) -> float:
@@ -114,6 +117,7 @@ class SleepProfile:
         deep_sleep_time_seconds: int,
         missed_cycles: int,
         queue_timeout_hours: int,
+        probe_before_queue: bool = DEFAULT_PROBE_BEFORE_QUEUE,
     ) -> SleepProfile:
         """Build a profile from primitive values (pure; unit-testable)."""
         deep_sleep_enabled = (
@@ -132,6 +136,7 @@ class SleepProfile:
             sleep_timeout_ms=sleep_timeout_ms,
             missed_cycles=missed_cycles,
             queue_timeout_hours=queue_timeout_hours,
+            probe_before_queue=probe_before_queue,
         )
 
     @classmethod
@@ -149,5 +154,8 @@ class SleepProfile:
             missed_cycles=options.get(CONF_MISSED_CYCLES, DEFAULT_MISSED_CYCLES),
             queue_timeout_hours=options.get(
                 CONF_QUEUE_TIMEOUT_HOURS, DEFAULT_QUEUE_TIMEOUT_HOURS
+            ),
+            probe_before_queue=options.get(
+                CONF_PROBE_BEFORE_QUEUE, DEFAULT_PROBE_BEFORE_QUEUE
             ),
         )

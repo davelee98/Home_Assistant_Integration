@@ -87,6 +87,15 @@ def test_probably_asleep_stale_advert_is_true():
     assert profile.probably_asleep(stale, now=now) is True
 
 
+def test_probe_before_queue_defaults_true():
+    # Default also proves create() keeps working for callers that omit it.
+    assert _profile().probe_before_queue is True
+
+
+def test_probe_before_queue_override():
+    assert _profile(probe_before_queue=False).probe_before_queue is False
+
+
 def test_probably_asleep_boundary():
     profile = _profile(sleep_timeout_ms=10000)
     now = 1_000_000.0

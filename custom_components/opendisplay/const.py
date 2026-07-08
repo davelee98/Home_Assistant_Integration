@@ -28,6 +28,13 @@ DEFAULT_MISSED_CYCLES = 3
 CONF_QUEUE_TIMEOUT_HOURS = "queue_timeout_hours"
 DEFAULT_QUEUE_TIMEOUT_HOURS = 24
 
+# Probe a probably-asleep device with one short connect attempt before queuing
+# an image send. Catches wake adverts the scanner missed and Silabs tags that
+# advertise continuously despite a battery+deep-sleep power config. Bounded
+# cost: one attempt with a short timeout (see services.PROBE_CONNECT_TIMEOUT_S).
+CONF_PROBE_BEFORE_QUEUE = "probe_before_queue"
+DEFAULT_PROBE_BEFORE_QUEUE = True
+
 # --- Cache ------------------------------------------------------------------
 # entry.data key holding the serialized device state used to set up the entry
 # without connecting when a sleepy device is dark at startup.
