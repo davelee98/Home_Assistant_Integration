@@ -328,7 +328,7 @@
                 },
                 "frequency_hz": {
                     "name": "Frequency",
-                    "description": "Tone frequency in Hz (0 = silence, 400-12000)."
+                    "description": "Tone frequency in Hz (0 = silence). Played as the nearest quarter-tone note; frequencies outside the buzzer's playable range are shifted by octaves to fit."
                 },
                 "duration_ms": {
                     "name": "Duration",
