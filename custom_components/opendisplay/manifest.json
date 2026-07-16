@@ -15,6 +15,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/OpenDisplay/Home_Assistant_Integration/issues",
   "loggers": ["opendisplay"],
-  "requirements": ["py-opendisplay[silabs-ota]==7.12.0", "odl-renderer==0.5.12"],
+  "requirements": ["py-opendisplay[silabs-ota] @ git+https://github.com/davelee98/py-opendisplay.git@debug/py-dongle", "odl-renderer==0.5.12"],
   "version": "3.0.0-beta.7"
 }
