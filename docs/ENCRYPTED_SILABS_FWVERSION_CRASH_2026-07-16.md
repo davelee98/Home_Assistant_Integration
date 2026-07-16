@@ -10,10 +10,22 @@ Failure only reproduces when device encryption is enabled.
 The crash is a **two-sided interaction**; encryption is the trigger, not the
 direct fault.
 
-1. **Firmware_Silabs (trigger):** the encrypted config-read **over-sends** — the
-   client receives **670 bytes for a declared 613** and then finds **2 leftover
-   "stale" notifications** still queued. Those leftovers are encrypted
-   config-read frames.
+> **STATUS UPDATE (2026-07-16): firmware confirmed correct — it is not the
+> trigger.** Point 1 below originally read "Firmware_Silabs (trigger): the
+> encrypted config-read over-sends." Hardware testing confirms the firmware emits
+> exactly `data_len` per command and does **not** over-send. The stray/duplicate
+> config frames that pollute the queue are injected by the **BLE transport**
+> (BlueZ / bleak / ESPHome Bluetooth proxy) carrying the larger encrypted
+> notifications, and are silently concatenated by py-opendisplay's
+> chunk-number-blind reassembly. The client-side fatal amplifier (point 2) is
+> unchanged and remains the actual fix target. See
+> `Firmware_Silabs/docs/CONFIG_READ_OVERSEND_TRIGGER_2026-07-16.md`.
+
+1. **BLE transport (trigger, was "Firmware_Silabs"):** duplicate `RESP_CONFIG_READ`
+   notifications reach the client — it receives **670 bytes for a declared 613**
+   and then finds **2 leftover "stale" notifications** still queued. Those
+   leftovers are encrypted config-read frames the transport duplicated, not frames
+   the tag over-emitted.
 2. **py-opendisplay (fatal amplifier):** `read_firmware_version()`
    (`device.py:1013-1039`) is the **only** post-authentication command that
    bypasses the encrypt/decrypt wrappers (`self._write` / `self._read`) and reads
@@ -23,10 +35,10 @@ direct fault.
    `__init__.py:243`) tears the link down. That is the "Disconnecting" 25 ms after
    "Reading firmware version" with no success line.
 
-So: **both repos**. The firmware provides the encryption-specific trigger; the
-client turns it into a hard failure. Encryption is why it only reproduces with an
-encrypted device — the config over-read leaves the queue polluted with encrypted
-frames precisely in the encrypted path.
+So: the trigger is the **transport** (not the firmware) and the client turns it
+into a hard failure. Encryption is why it only reproduces with an encrypted
+device — the larger encrypted notifications are what the transport duplicates,
+leaving the queue polluted precisely in the encrypted path.
 
 ### An earlier (wrong) hypothesis, for the record
 
