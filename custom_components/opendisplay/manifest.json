@@ -15,7 +15,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/OpenDisplay/Home_Assistant_Integration/issues",
   "loggers": ["opendisplay"],
-  "requirements": ["py-opendisplay[silabs-ota] @ git+https://github.com/davelee98/py-opendisplay.git@feat/wifi-transport", "odl-renderer==0.5.12"],
-  "version": "3.0.0-beta.7",
+  "requirements": ["py-opendisplay[silabs-ota] @ git+https://github.com/davelee98/py-opendisplay.git@cf29c3cbbb7dc7ba8938e581bb685e163b93e438", "odl-renderer==0.5.12"],
+  "version": "4.0-wifi2",
   "zeroconf": ["_opendisplay._tcp.local."]
 }
