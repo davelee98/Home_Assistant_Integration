@@ -1,7 +1,36 @@
 """Constants for the OpenDisplay integration."""
 
+from datetime import timedelta
+
 DOMAIN = "opendisplay"
 CONF_ENCRYPTION_KEY = "encryption_key"
+
+# --- WiFi (LAN) transport ---------------------------------------------------
+# Entry-data keys for a WiFi-reachable device (protocol 2.2 SECTION 9). Reuse
+# the Home Assistant const string values ("host"/"port") so the keys are
+# interchangeable with homeassistant.const.CONF_HOST/CONF_PORT; CONF_TLS stores
+# the mDNS ``tls`` flag so the resolver knows which channel (plaintext vs
+# TLS-PSK) the device is serving.
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_TLS = "tls"
+
+# Default LAN ports (SECTION 9). Plaintext is the configured base port; TLS is
+# derived as base + 1. Clients learn the live port from the mDNS SRV record.
+DEFAULT_LAN_PORT = 2446
+DEFAULT_TLS_PORT = 2447
+
+# Prefer WiFi only when the device was seen via mDNS within this window. The SRV
+# record TTL is 120 s, so 10 min gives comfortable margin: a device that has
+# stopped announcing (powered off, left the network) ages out and delivery
+# falls back to BLE rather than stalling on a dead TCP connect.
+MDNS_FRESHNESS_WINDOW = timedelta(minutes=10)
+MDNS_FRESHNESS_WINDOW_S = MDNS_FRESHNESS_WINDOW.total_seconds()
+
+# TCP connect timeout for the config-flow reachability probe and the delivery
+# WiFi attempt. Short: a reachable LAN device connects in well under a second,
+# so 5 s only bounds an unreachable/stale host before falling back to BLE.
+TCP_CONNECT_TIMEOUT_S = 5.0
 
 # Dispatcher signals (suffixed with the device address at send/subscribe time).
 # Carries the JPEG preview of the frame shown by the image entity.

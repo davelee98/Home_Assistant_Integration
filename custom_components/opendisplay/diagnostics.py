@@ -7,6 +7,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import OpenDisplayConfigEntry
+from .const import CONF_HOST, CONF_PORT, CONF_TLS
 
 TO_REDACT = {"ssid", "password", "server_url"}
 
@@ -52,6 +53,20 @@ async def async_get_config_entry_diagnostics(
             "last_error": state.last_error,
         }
 
+    # Transport diagnostics: WiFi/LAN endpoint (host/port/tls are not secret; the
+    # redaction set already covers ssid/password/server_url), the last transport a
+    # delivery used, and how recently the device was seen via mDNS. host is None
+    # for a pure-BLE entry.
+    system = getattr(runtime.device_config, "system", None)
+    transport_diag: dict[str, Any] = {
+        "host": entry.data.get(CONF_HOST),
+        "port": entry.data.get(CONF_PORT),
+        "tls": entry.data.get(CONF_TLS),
+        "last_transport": getattr(runtime, "last_transport", None),
+        "mdns_last_seen": getattr(runtime, "mdns_last_seen", None),
+        "communication_modes": getattr(system, "communication_modes", None),
+    }
+
     return {
         "firmware": {
             "major": fw["major"],
@@ -60,5 +75,6 @@ async def async_get_config_entry_diagnostics(
         },
         "is_flex": runtime.is_flex,
         "sleep": sleep_diag,
+        "transport": transport_diag,
         "device_config": async_redact_data(_asdict(runtime.device_config), TO_REDACT),
     }

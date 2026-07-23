@@ -1,8 +1,10 @@
 """Unit tests for DeliveryManager with mocked hass/coordinator/device.
 
 These avoid the full Home Assistant test harness: the manager's HA touchpoints
-(``async_call_later``, ``async_dispatcher_send``, ``async_ble_device_from_address``
-and ``OpenDisplayDevice``) are patched in the delivery module namespace.
+(``async_call_later``, ``async_dispatcher_send``) are patched in the delivery
+module namespace, while the connection touchpoints (``async_ble_device_from_address``
+and ``OpenDisplayDevice``) now live in — and are patched in — the transport module
+namespace, since the resolver owns the connect/fallback flow.
 """
 
 import asyncio
@@ -16,6 +18,7 @@ import pytest
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.opendisplay import delivery as delivery_mod
+from custom_components.opendisplay import transport as transport_mod
 from custom_components.opendisplay.ble_lock import async_get_ble_lock, ble_connection
 from custom_components.opendisplay.const import (
     CONF_BLOCKS_PER_ACK,
@@ -204,8 +207,8 @@ async def test_drain_delivers_upload():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
-        patch.object(delivery_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)),
     ):
         mgr = DeliveryManager(hass, entry)
         _submit(mgr, device_id="dev1")
@@ -223,9 +226,9 @@ async def test_drain_ble_failure_keeps_slot_and_counts_attempt():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod,
+            transport_mod,
             "OpenDisplayDevice",
             side_effect=_raising_device_ctx(BLEConnectionError("boom")),
         ),
@@ -245,9 +248,9 @@ async def test_drain_deadline_timeout_raises_and_counts_attempt():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod,
+            transport_mod,
             "OpenDisplayDevice",
             side_effect=_raising_device_ctx(TimeoutError()),
         ),
@@ -274,9 +277,9 @@ async def test_drain_gives_up_after_max_attempts():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=deadline_cancel),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod,
+            transport_mod,
             "OpenDisplayDevice",
             side_effect=_raising_device_ctx(BLEConnectionError("boom")),
         ),
@@ -311,9 +314,9 @@ async def test_drain_auth_failure_pauses_and_starts_reauth():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod,
+            transport_mod,
             "OpenDisplayDevice",
             side_effect=_raising_device_ctx(AuthenticationFailedError("bad key")),
         ),
@@ -343,8 +346,8 @@ async def test_drain_config_resync_updates_runtime_and_cache():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
-        patch.object(delivery_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)),
         patch("custom_components.opendisplay._write_cache") as write_cache,
     ):
         mgr = DeliveryManager(hass, entry)
@@ -385,9 +388,9 @@ async def test_drain_threads_pipe_kwargs_default():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
+            transport_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
         ) as od,
     ):
         mgr = DeliveryManager(hass, entry)
@@ -411,9 +414,9 @@ async def test_drain_threads_pipe_kwargs_custom():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
         patch.object(
-            delivery_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
+            transport_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
         ) as od,
     ):
         mgr = DeliveryManager(hass, entry)
@@ -443,10 +446,10 @@ async def test_drain_passes_state_and_refresh_mode():
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
         patch.object(
-            delivery_mod, "async_ble_device_from_address", return_value=MagicMock()
+            transport_mod, "async_ble_device_from_address", return_value=MagicMock()
         ),
         patch.object(
-            delivery_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
+            transport_mod, "OpenDisplayDevice", side_effect=_fake_device_ctx(device)
         ),
     ):
         mgr = DeliveryManager(hass, entry)
@@ -488,8 +491,8 @@ async def test_drain_holds_registry_lock_during_connection():
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
-        patch.object(delivery_mod, "OpenDisplayDevice", side_effect=_factory),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "OpenDisplayDevice", side_effect=_factory),
     ):
         mgr = DeliveryManager(hass, entry)
         _submit(mgr)
@@ -528,8 +531,8 @@ async def test_drain_waits_for_preheld_registry_lock(caplog):
     with (
         patch.object(delivery_mod, "async_call_later", return_value=MagicMock()),
         patch.object(delivery_mod, "async_dispatcher_send"),
-        patch.object(delivery_mod, "async_ble_device_from_address", return_value=MagicMock()),
-        patch.object(delivery_mod, "OpenDisplayDevice", side_effect=_factory),
+        patch.object(transport_mod, "async_ble_device_from_address", return_value=MagicMock()),
+        patch.object(transport_mod, "OpenDisplayDevice", side_effect=_factory),
     ):
         mgr = DeliveryManager(hass, entry)
         _submit(mgr)

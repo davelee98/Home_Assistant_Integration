@@ -5,6 +5,7 @@
       "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]",
+      "no_mac": "The discovered device did not advertise a MAC address and cannot be set up.",
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
@@ -18,6 +19,10 @@
     "step": {
       "bluetooth_confirm": {
         "description": "[%key:component::bluetooth::config::step::bluetooth_confirm::description%]"
+      },
+      "zeroconf_confirm": {
+        "description": "Do you want to set up {name}, discovered over WiFi?",
+        "title": "OpenDisplay device found"
       },
       "encryption_key": {
         "data": {

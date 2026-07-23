@@ -36,7 +36,6 @@ from opendisplay import (
     RefreshMode,
 )
 
-from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -56,6 +55,7 @@ from .const import (
     SIGNAL_IMAGE_UPDATED,
     SIGNAL_PENDING_STATE,
 )
+from .transport import async_run_with_fallback
 
 if TYPE_CHECKING:
     from . import OpenDisplayConfigEntry
@@ -308,37 +308,46 @@ class DeliveryManager:
             return
 
         runtime = self._entry.runtime_data
-        async with ble_connection(self._address, "queued content delivery"):
-            ble_device = async_ble_device_from_address(
-                self._hass, self._address, connectable=True
-            )
-            if ble_device is None:
-                # The advertisement that woke us has already aged out; retry next.
-                self._register_attempt_failure("device not connectable")
-                return
+        upload = self._pending_upload
+        use_measured = upload.use_measured_palettes if upload else True
+        base_kwargs: dict[str, Any] = {
+            "config": runtime.device_config,
+            "use_measured_palettes": use_measured,
+            "encryption_key": key,
+            "blocks_per_ack": self._entry.options.get(
+                CONF_BLOCKS_PER_ACK, DEFAULT_BLOCKS_PER_ACK
+            ),
+            "max_queue_size": self._entry.options.get(
+                CONF_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE
+            ),
+        }
 
-            upload = self._pending_upload
-            use_measured = upload.use_measured_palettes if upload else True
-            async with (
-                asyncio.timeout(DELIVERY_DEADLINE_S),
-                OpenDisplayDevice(
-                    mac_address=self._address,
-                    ble_device=ble_device,
-                    config=runtime.device_config,
-                    use_measured_palettes=use_measured,
-                    encryption_key=key,  # type: ignore[arg-type]
-                    blocks_per_ack=self._entry.options.get(
-                        CONF_BLOCKS_PER_ACK, DEFAULT_BLOCKS_PER_ACK
-                    ),
-                    max_queue_size=self._entry.options.get(
-                        CONF_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE
-                    ),
-                ) as device,
-            ):
-                if upload is not None and not upload.paused:
-                    await self._drain_upload(device, upload)
-                if self._pending_config_resync:
-                    await self._drain_resync(device)
+        async def _run(device: OpenDisplayDevice) -> None:
+            # Re-read pending state each invocation: if a WiFi attempt uploaded
+            # then failed on resync, the BLE fallback re-runs this and must not
+            # re-upload an already-delivered frame (``_drain_upload`` clears it).
+            pending = self._pending_upload
+            if pending is not None and not pending.paused:
+                await self._drain_upload(device, pending)
+            if self._pending_config_resync:
+                await self._drain_resync(device)
+
+        # Prefer WiFi when the entry has a fresh mDNS host; fall back to BLE on any
+        # WiFi failure. All inside the per-MAC lock (MAC-keyed, transport-neutral).
+        # A missing connectable BLE device raises BLEConnectionError, which
+        # ``_deliver`` turns into a retry-next-wake attempt failure — the same
+        # outcome as the previous inline "device not connectable" check.
+        async with (
+            ble_connection(self._address, "queued content delivery"),
+            asyncio.timeout(DELIVERY_DEADLINE_S),
+        ):
+            await async_run_with_fallback(
+                self._hass,
+                self._entry,
+                _run,
+                base_kwargs=base_kwargs,
+                ble_unavailable=lambda: BLEConnectionError("device not connectable"),
+            )
 
     async def _drain_upload(
         self, device: OpenDisplayDevice, upload: PendingUpload

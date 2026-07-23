@@ -89,6 +89,13 @@ class OpenDisplayRuntimeData:
     config_resync_pending: bool = False
     # Owns queued work delivered at the next wake (set in async_setup_entry).
     delivery: DeliveryManager | None = None
+    # Monotonic timestamp of the last mDNS sighting (fed by the zeroconf config
+    # step). Drives the WiFi-vs-BLE transport choice (see transport.py); None
+    # until the device is first seen via mDNS.
+    mdns_last_seen: float | None = None
+    # Label of the transport the most recent delivery completed over
+    # ("wifi"/"ble"); surfaced in diagnostics. None until a delivery runs.
+    last_transport: str | None = None
 
 
 type OpenDisplayConfigEntry = ConfigEntry[OpenDisplayRuntimeData]

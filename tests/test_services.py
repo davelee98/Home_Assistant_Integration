@@ -1,9 +1,10 @@
 """Unit tests for the _async_send_image sleep gate and probe-before-queue.
 
 Mirrors the test_delivery.py approach: no Home Assistant test harness; the
-service module's HA/BLE touchpoints (``prepare_image``, ``_pil_to_jpeg``,
-``async_dispatcher_send``, ``async_ble_device_from_address`` and
-``OpenDisplayDevice``) are patched in the services module namespace.
+service module's HA touchpoints (``prepare_image``, ``_pil_to_jpeg``,
+``async_dispatcher_send``) are patched in the services module namespace, while the
+connection touchpoints (``async_ble_device_from_address`` and ``OpenDisplayDevice``)
+are patched in the transport module namespace, where the resolver now calls them.
 """
 
 import asyncio
@@ -17,6 +18,7 @@ from PIL import Image as PILImage
 import pytest
 
 from custom_components.opendisplay import services as services_mod
+from custom_components.opendisplay import transport as transport_mod
 from custom_components.opendisplay.ble_lock import ble_connection
 from custom_components.opendisplay.const import (
     CONF_BLOCKS_PER_ACK,
@@ -120,9 +122,9 @@ def _patches(od_factory, ble_device="ble-device"):
         patch.object(services_mod, "_pil_to_jpeg", return_value=b"jpeg"),
         patch.object(services_mod, "async_dispatcher_send"),
         patch.object(
-            services_mod, "async_ble_device_from_address", return_value=ble_device
+            transport_mod, "async_ble_device_from_address", return_value=ble_device
         ),
-        patch.object(services_mod, "OpenDisplayDevice", od_factory),
+        patch.object(transport_mod, "OpenDisplayDevice", od_factory),
     )
 
 

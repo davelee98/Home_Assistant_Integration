@@ -37,7 +37,6 @@ import voluptuous as vol
 from homeassistant.components.bluetooth import (
     BluetoothReachabilityIntent,
     async_address_reachability_diagnostics,
-    async_ble_device_from_address,
 )
 from homeassistant.components.http.auth import async_sign_path
 from homeassistant.components.media_source import async_resolve_media
@@ -72,6 +71,7 @@ from .const import (
     SIGNAL_IMAGE_UPDATED,
 )
 from .delivery import DELIVERY_DEADLINE_S, DeliveryReceipt
+from .transport import async_run_with_fallback
 
 ATTR_IMAGE = "image"
 ATTR_ROTATION = "rotation"
@@ -340,11 +340,17 @@ async def _async_connect_and_run(
     """
     address = entry.unique_id
     assert address is not None
-    ble_device = async_ble_device_from_address(hass, address, connectable=True)
-    if ble_device is None:
+
+    def _ble_unavailable() -> BaseException:
+        """Build the error to raise when no connectable BLE device exists.
+
+        Called by the transport helper only when BLE is the selected (or
+        fallen-back-to) transport and the device is not connectable — a WiFi
+        delivery that succeeds never reaches this.
+        """
         if reraise_ble:
-            raise _DeviceUnavailable
-        raise HomeAssistantError(
+            return _DeviceUnavailable()
+        return HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="device_not_found",
             translation_placeholders={
@@ -379,44 +385,49 @@ async def _async_connect_and_run(
             translation_domain=DOMAIN, translation_key="authentication_error"
         ) from err
 
-    device_kwargs: dict[str, Any] = {}
+    base_kwargs: dict[str, Any] = {
+        "config": entry.runtime_data.device_config,
+        "use_measured_palettes": use_measured_palettes,
+        "encryption_key": encryption_key,
+    }
     if connect_timeout is not None:
-        device_kwargs["timeout"] = connect_timeout
+        base_kwargs["timeout"] = connect_timeout
     if max_attempts is not None:
-        device_kwargs["max_attempts"] = max_attempts
+        base_kwargs["max_attempts"] = max_attempts
     # Sliding-window pipe-transfer tuning (max_queue_size == 1 disables it).
     options = entry.options
-    device_kwargs["blocks_per_ack"] = options.get(
+    base_kwargs["blocks_per_ack"] = options.get(
         CONF_BLOCKS_PER_ACK, DEFAULT_BLOCKS_PER_ACK
     )
-    device_kwargs["max_queue_size"] = options.get(
+    base_kwargs["max_queue_size"] = options.get(
         CONF_MAX_QUEUE_SIZE, DEFAULT_MAX_QUEUE_SIZE
     )
 
     try:
-        # Serialize all BLE access to this tag: the device has a single BLE link
-        # and the library has no per-address lock, so overlapping connections
-        # (two automations, or a drawcustom racing an LED/buzzer/upload on the
-        # same MAC) fail with a confusing upload_error. The lock is held for the
-        # full connection lifetime and released on error. Keyed per MAC, so
-        # different tags are not serialized against each other.
+        # Serialize all access to this tag: the device has a single link (BLE or
+        # the one-client WiFi/LAN endpoint) and the library has no per-address
+        # lock, so overlapping connections (two automations, or a drawcustom
+        # racing an LED/buzzer/upload on the same MAC) fail with a confusing
+        # upload_error. The lock is MAC-keyed — hence transport-neutral — held for
+        # the full connection lifetime and released on error, so different tags
+        # are not serialized against each other.
         # Same wall-clock ceiling as the queued-delivery drain: without it a
         # wedged transfer would hold the lock forever and block every later
         # operation on this MAC (the library's per-read timeouts bound normal
         # failures, but not adversarial/buggy-firmware frame streams).
+        # The transport helper prefers WiFi when the entry has a fresh mDNS host
+        # and falls back to BLE on any WiFi failure, all inside this lock.
         async with (
             asyncio.timeout(DELIVERY_DEADLINE_S),
             ble_connection(address, "service call (upload/drawcustom/LED/buzzer)"),
-            OpenDisplayDevice(
-                mac_address=address,
-                ble_device=ble_device,
-                config=entry.runtime_data.device_config,
-                use_measured_palettes=use_measured_palettes,
-                encryption_key=encryption_key,
-                **device_kwargs,
-            ) as device,
         ):
-            await action(device)
+            await async_run_with_fallback(
+                hass,
+                entry,
+                action,
+                base_kwargs=base_kwargs,
+                ble_unavailable=_ble_unavailable,
+            )
     except TimeoutError as err:
         raise HomeAssistantError(
             translation_domain=DOMAIN,
