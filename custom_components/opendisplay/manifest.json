@@ -16,6 +16,6 @@
   "issue_tracker": "https://github.com/OpenDisplay/Home_Assistant_Integration/issues",
   "loggers": ["opendisplay"],
   "requirements": ["py-opendisplay[silabs-ota]@git+https://github.com/davelee98/py-opendisplay.git@feat/wifi-transport", "odl-renderer==0.5.12"],
-  "version": "4.0-wifi4",
+  "version": "4.0-wifi5",
   "zeroconf": ["_opendisplay._tcp.local."]
 }
