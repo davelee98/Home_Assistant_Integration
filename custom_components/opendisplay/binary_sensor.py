@@ -4,13 +4,20 @@ from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import OpenDisplayConfigEntry
-from .const import SIGNAL_PENDING_STATE
+from .const import (
+    CONF_HOST,
+    CONF_PORT,
+    CONF_TLS,
+    DEFAULT_LAN_PORT,
+    SIGNAL_PENDING_STATE,
+)
 from .delivery import DeliveryManager, DeliverySnapshot
 
 PARALLEL_UPDATES = 0
@@ -21,13 +28,22 @@ async def async_setup_entry(
     entry: OpenDisplayConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the OpenDisplay update-pending binary sensor."""
+    """Set up the OpenDisplay binary sensors."""
+    entities: list[BinarySensorEntity] = []
+
     manager = entry.runtime_data.delivery
-    if manager is None:
-        return
-    async_add_entities(
-        [OpenDisplayUpdatePendingSensor(entry.unique_id or "", manager)]
-    )
+    if manager is not None:
+        entities.append(OpenDisplayUpdatePendingSensor(entry.unique_id or "", manager))
+
+    # WiFi (LAN) status. Only for WiFi-capable/-configured tags (device carries a
+    # wifi_config packet, or a LAN host is already stored) so pure-BLE devices
+    # don't get a permanently-off entity.
+    if entry.runtime_data.device_config.wifi_config is not None or entry.data.get(
+        CONF_HOST
+    ):
+        entities.append(OpenDisplayWifiSensor(entry))
+
+    async_add_entities(entities)
 
 
 def _to_iso(epoch: float | None) -> str | None:
@@ -91,3 +107,46 @@ class OpenDisplayUpdatePendingSensor(BinarySensorEntity):
         """Handle a delivery-state change."""
         self._apply(snapshot)
         self.async_write_ha_state()
+
+
+class OpenDisplayWifiSensor(BinarySensorEntity):
+    """Whether the WiFi (LAN) transport is enabled for an OpenDisplay device.
+
+    On when the integration holds a LAN endpoint (IP) for this tag — learned
+    from the device's mDNS announcement and stored on the config entry. The IP,
+    port and TLS flag are surfaced as attributes so the device page shows where
+    WiFi delivery connects. Backed entirely by config-entry data, so it stays
+    available and meaningful while the device is asleep. The config entry is
+    reloaded whenever mDNS updates the host, which recreates this entity, so
+    reading ``entry.data`` on each access always reflects the current endpoint.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "wifi"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, entry: OpenDisplayConfigEntry) -> None:
+        """Initialize from the config entry that stores the LAN endpoint."""
+        self._entry = entry
+        address = entry.unique_id or ""
+        self._attr_unique_id = f"{address}-wifi"
+        self._attr_device_info = DeviceInfo(
+            connections={(CONNECTION_BLUETOOTH, address)},
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """True when a LAN endpoint (IP) is configured for this device."""
+        return bool(self._entry.data.get(CONF_HOST))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the LAN endpoint while WiFi is enabled."""
+        host = self._entry.data.get(CONF_HOST)
+        if not host:
+            return {}
+        return {
+            "ip_address": host,
+            "port": int(self._entry.data.get(CONF_PORT) or DEFAULT_LAN_PORT),
+            "tls": bool(self._entry.data.get(CONF_TLS)),
+        }

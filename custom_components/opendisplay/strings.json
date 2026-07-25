@@ -81,6 +81,9 @@
     "binary_sensor": {
       "update_pending": {
         "name": "Update pending"
+      },
+      "wifi": {
+        "name": "WiFi"
       }
     },
     "image": {

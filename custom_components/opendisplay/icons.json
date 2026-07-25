@@ -6,6 +6,12 @@
         "state": {
           "off": "mdi:image-check"
         }
+      },
+      "wifi": {
+        "default": "mdi:wifi",
+        "state": {
+          "off": "mdi:wifi-off"
+        }
       }
     },
     "update": {
