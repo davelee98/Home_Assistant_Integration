@@ -172,3 +172,4 @@ ha_data_provider.md
 
 custom_components/opendisplay/*.jpg
 custom_components/opendisplay/lastapinteraction.txt
+.devcontainer-lock.json
